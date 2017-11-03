@@ -336,12 +336,22 @@ public class Tracer {
                 ? parentSpan.generateChildSpan(spanName, spanPurpose)
                 : Span.generateRootSpanForNewTrace(spanName, spanPurpose).withSampleable(isNextRootSpanSampleable()).build();
 
+        handleChildSpan(childSpan);
+
+        return childSpan;
+    }
+
+    /**
+     * Handle child span.
+     * See {@link Tracer#startSubSpan(String, SpanPurpose)} for more info.
+     *
+     * @param childSpan the child span
+     */
+    protected void handleChildSpan(Span childSpan) {
         pushSpanOntoCurrentSpanStack(childSpan);
 
         notifySpanStarted(childSpan);
         notifyIfSpanSampled(childSpan);
-
-        return childSpan;
     }
 
     /**
@@ -477,13 +487,22 @@ public class Tracer {
             .withUserId(userId)
             .build();
 
+        handleNewSpan(span);
+
+        return span;
+    }
+
+    /**
+     * Handle new span.
+     *
+     * @param span the current new span
+     */
+    protected void handleNewSpan(Span span) {
         // Since this is a "starting from scratch/new request" call we clear out and restart the current span stack even if it already had something in it.
         startNewSpanStack(span);
 
         notifySpanStarted(span);
         notifyIfSpanSampled(span);
-
-        return span;
     }
 
     /**

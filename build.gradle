@@ -67,6 +67,7 @@ ext {
     zipkinVersion = '1.16.2'
     springVersion = '4.3.7.RELEASE'
     springbootVersion = '1.5.2.RELEASE'
+    opentracingVersion = '0.31.0-RC1'
 
     nikeInternalUtilVersion = '0.9.0.1'
 

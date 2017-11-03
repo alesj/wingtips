@@ -2,13 +2,13 @@ package com.nike.wingtips;
 
 import com.nike.wingtips.util.TracerManagedSpanStatus;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Represents some logical "unit of work" that is part of the larger distributed trace. A given request's trace tree is made up of all the spans with the same {@link #traceId}
@@ -43,6 +43,7 @@ import java.util.concurrent.TimeUnit;
  * </pre>
  *
  * @author Nic Munroe
+ * @author Ales Justin
  */
 @SuppressWarnings("WeakerAccess")
 public class Span implements AutoCloseable {
@@ -77,6 +78,8 @@ public class Span implements AutoCloseable {
     private final SpanPurpose spanPurpose;
     private final long spanStartTimeEpochMicros;
     private final long spanStartTimeNanos;
+
+    private long spanFinishTimeNanos;
 
     private Long durationNanos;
 
@@ -177,7 +180,7 @@ public class Span implements AutoCloseable {
      *          before calling {@link Builder#build()} (e.g. setting a user ID via {@link Builder#withUserId(String)}.
      */
     public static Builder generateRootSpanForNewTrace(String spanName, SpanPurpose spanPurpose) {
-        return Span.newBuilder(spanName, spanPurpose);
+        return newBuilder(spanName, spanPurpose);
     }
 
     /**
@@ -319,7 +322,7 @@ public class Span implements AutoCloseable {
         if (this.durationNanos != null)
             throw new IllegalStateException("This Span is already completed.");
 
-        this.durationNanos = System.nanoTime() - spanStartTimeNanos;
+        this.durationNanos = (spanFinishTimeNanos > 0 ? spanFinishTimeNanos : System.nanoTime()) - spanStartTimeNanos;
         // We need to recalculate the JSON and/or key/value representation(s) of this span now that the state of the span has been modified.
         // By setting a cached value to null it will be regenerated the next time it is requested.
         cachedJsonRepresentation = null;
@@ -393,6 +396,29 @@ public class Span implements AutoCloseable {
         }
 
         return builder.toString();
+    }
+
+    /**
+     * Put span's info into map.
+     *
+     * @return span's info as a map
+     */
+    public Map<String, Object> toMap() {
+        Map<String, Object> map = new HashMap<>();
+
+        map.put(TRACE_ID_FIELD, traceId);
+        map.put(PARENT_SPAN_ID_FIELD, parentSpanId);
+        map.put(SPAN_ID_FIELD, spanId);
+        map.put(SPAN_NAME_FIELD, spanName);
+        map.put(SAMPLEABLE_FIELD, sampleable);
+        map.put(USER_ID_FIELD, userId);
+        map.put(SPAN_PURPOSE_FIELD, spanPurpose.name());
+        map.put(START_TIME_EPOCH_MICROS_FIELD, spanStartTimeEpochMicros);
+        if (isCompleted()) {
+            map.put(DURATION_NANOS_FIELD, durationNanos);
+        }
+
+        return map;
     }
 
     /**
@@ -486,7 +512,12 @@ public class Span implements AutoCloseable {
         }
     }
 
-    private static Span fromKeyValueMap(Map<String, String> map) {
+    /**
+     *
+     * @param map the map of Span's keys and values
+     * @return The {@link Span} represented by the given map parameter
+     */
+    public static Span fromKeyValueMap(Map<String, String> map) {
         // Use the map to get the field values for the span.
         String traceId = nullSafeGetString(map, TRACE_ID_FIELD);
         String spanId = nullSafeGetString(map, SPAN_ID_FIELD);
@@ -581,6 +612,17 @@ public class Span implements AutoCloseable {
     @Override
     public void close() {
         Tracer.getInstance().handleSpanCloseMethod(this);
+    }
+
+    /**
+     * Close span with explicit finish time (in nanos).
+     * See {@link Span#close()} for more details.
+     *
+     * @param spanFinishTimeNanos span finish time (in nanos)
+     */
+    public void close(long spanFinishTimeNanos) {
+        this.spanFinishTimeNanos = spanFinishTimeNanos;
+        close();
     }
 
     @Override
@@ -815,6 +857,16 @@ public class Span implements AutoCloseable {
          * @return a {@code Span} built with parameters of this {@code Span.Builder}
          */
         public Span build() {
+            return build(false);
+        }
+
+        /**
+         * See {@link Builder#build()} for more details.
+         *
+         * @param handleNewSpan do we handle new span; e.g. register with current thread stack, etc
+         * @return a {@code Span} built with parameters of this {@code Span.Builder}
+         */
+        public Span build(boolean handleNewSpan) {
             if (traceId == null)
                 traceId = TraceAndSpanIdGenerator.generateId();
 
@@ -836,7 +888,17 @@ public class Span implements AutoCloseable {
             if (spanStartTimeNanos == null)
                 spanStartTimeNanos = System.nanoTime();
 
-            return new Span(traceId, parentSpanId, spanId, spanName, sampleable, userId, spanPurpose, spanStartTimeEpochMicros, spanStartTimeNanos, durationNanos);
+            Span span = new Span(traceId, parentSpanId, spanId, spanName, sampleable, userId, spanPurpose, spanStartTimeEpochMicros, spanStartTimeNanos, durationNanos);
+
+            if (handleNewSpan) {
+                if (parentSpanId == null) {
+                    Tracer.getInstance().handleNewSpan(span);
+                } else {
+                    Tracer.getInstance().handleChildSpan(span);
+                }
+            }
+
+            return span;
         }
     }
 }
